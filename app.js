@@ -25,29 +25,42 @@ const redisCli = redisClient.v4;
 
 // 공공데이터 불러와서 redis에 저장
 const set_data_in_redis = async () => {
+  let data = [];
+  let page = 1;
+  while (true) {
+    let newData = await get_cafeteria_data(page);
+    data = [...data, ...newData];
+    if (newData.length < 100) {
+      //데이터를 한번에 100개씩 들고오는데 마지막페이지는 남은 급식소 개수를 들고오므로 100보다 작다.
+      break;
+    } else {
+      page += 1;
+    }
+  }
+
+  //redis에 공공데이터 저장
+  let setting = await redisClient.v4.set("cafeterias", JSON.stringify(data));
+  if (setting) {
+    console.log("급식소 data저장 성공");
+  } else {
+    console.log("급식소 data저장 실패");
+  }
+};
+
+//100개씩 공공데이터를 담는 로직
+const get_cafeteria_data = async (pageNumber) => {
   const baseURL = process.env.BASEURL;
   const encoding_key = process.env.API_KEY;
 
   try {
     const res = await axios.get(
-      `${baseURL}?serviceKey=${encoding_key}&pageNo=1&numOfRows=100&type=json`
+      `${baseURL}?serviceKey=${encoding_key}&pageNo=${pageNumber}&numOfRows=100&type=json`
     );
-    // console.log("data_array: ", res.data.response.body.items);
-    // console.log("data: ", res.data.response);
-    if (res.data.response) {
-      //redis에 공공데이터 저장
-      let setting = await redisClient.v4.set(
-        "cafeterias",
-        JSON.stringify(res.data.response.body.items)
-      );
-      if (setting) {
-        console.log("급식소 data저장 성공");
-      } else {
-        console.log("급식소 data저장 실패");
-      }
-    }
+
+    return res.data.response.body.items;
   } catch (error) {
     console.log(error);
+    return null;
   }
 };
 
