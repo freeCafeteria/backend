@@ -23,12 +23,6 @@ redisClient.on("error", (err) => {
 redisClient.connect().then(); // redis v4 연결 (비동기)
 const redisCli = redisClient.v4;
 
-//redis에서 급식소 정보 들고오기
-redisClient.get("cafeterias", (err, value) => {
-  const value2 = JSON.parse(value);
-  console.log(value2);
-});
-
 // 공공데이터 불러와서 redis에 저장
 const set_data_in_redis = async () => {
   const baseURL = process.env.BASEURL;
@@ -42,18 +36,63 @@ const set_data_in_redis = async () => {
     // console.log("data: ", res.data.response);
     if (res.data.response) {
       //redis에 공공데이터 저장
-      redisClient.set(
+      let setting = await redisClient.v4.set(
         "cafeterias",
         JSON.stringify(res.data.response.body.items)
       );
+      if (setting) {
+        console.log("급식소 data저장 성공");
+      } else {
+        console.log("급식소 data저장 실패");
+      }
     }
   } catch (error) {
     console.log(error);
   }
 };
 
-app.get("/", (req, res) => {
-  res.send("hello world");
+app.get("/allCafeterias", async (req, res) => {
+  let data = await redisClient.v4.get("cafeterias");
+
+  data = JSON.parse(data);
+  console.log(data.length);
+  res.status(200).json(data);
+});
+
+app.post("/filteredCafeterias", async (req, res) => {
+  // user 위도,경도 가져오기
+  const userLat = req.body.lat;
+  const userLon = req.body.lon;
+  console.log(userLat, userLon);
+
+  // 급식소 정보 들고오기
+  let data = await redisClient.v4.get("cafeterias");
+  data = JSON.parse(data);
+  //filter 로직
+  const filteredData = data.filter((cafeteria) => {
+    if (!cafeteria.latitude) {
+      return false;
+    }
+    if (!cafeteria.longitude) {
+      return false;
+    }
+    //위도 검사
+    if (
+      userLat - 0.5 <= Number(cafeteria.latitude) &&
+      Number(cafeteria.latitude) <= userLat + 0.5
+    ) {
+      return true;
+    }
+    //경도 검사
+    if (
+      userLon - 0.5 <= Number(cafeteria.longitude) &&
+      Number(cafeteria.longitude) <= userLon + 0.5
+    ) {
+      return true;
+    }
+  });
+  console.log(filteredData.length);
+  res.status(200).json(filteredData);
 });
 
 app.listen(3000, () => {
