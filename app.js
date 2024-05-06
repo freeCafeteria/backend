@@ -3,6 +3,7 @@ import axios from "axios";
 import dotenv from "dotenv";
 import schedule from "node-schedule";
 import redis from "redis";
+import { isTimeInRange } from "./utils.js";
 
 dotenv.config();
 const app = express();
@@ -72,40 +73,101 @@ app.get("/allCafeterias", async (req, res) => {
   res.status(200).json(data);
 });
 
+app.get("/allCafeteriasDate", async (req, res) => {
+  let data = await redisClient.v4.get("cafeterias");
+
+  data = JSON.parse(data);
+  console.log(data.length);
+  let date = [];
+  for (let i = 0; i < data.length; i++) {
+    date = [...date, data[i].mlsvDate];
+  }
+  res.status(200).send(date);
+});
+
+app.get("/allCafeteriasTime", async (req, res) => {
+  let data = await redisClient.v4.get("cafeterias");
+
+  data = JSON.parse(data);
+  console.log(data.length);
+  let date = [];
+  for (let i = 0; i < data.length; i++) {
+    date = [...date, data[i].mlsvTime];
+  }
+  res.status(200).send(date);
+});
+
+app.get("/allCafeteriasTarget", async (req, res) => {
+  let data = await redisClient.v4.get("cafeterias");
+
+  data = JSON.parse(data);
+  console.log(data.length);
+  let date = [];
+  for (let i = 0; i < data.length; i++) {
+    date = [...date, data[i].mlsvTrget];
+  }
+  res.status(200).send(date);
+});
+
 app.post("/filteredCafeterias", async (req, res) => {
   // user 위도,경도 가져오기
-  const userLat = req.body.lat;
-  const userLon = req.body.lon;
-  console.log(userLat, userLon);
+
+  const userDate = req.body.userDate; // user의 현재 요일
+  const userTime = req.body.userTime; //user의 현재 시간
+  const userTarget = req.body.userTarget; // user의 급식대상
+  const userAge = req.body.userAge;
+  console.log(userDate, userTime, userTarget, userAge);
 
   // 급식소 정보 들고오기
   let data = await redisClient.v4.get("cafeterias");
   data = JSON.parse(data);
   //filter 로직
-  const filteredData = data.filter((cafeteria) => {
-    if (!cafeteria.latitude) {
-      return false;
+
+  //요일 필터링
+  console.log("요일 필터링");
+  const dateFilteredData = data.filter((cafeteria) => {
+    //요일 필터링
+    let cafeteriaDate = cafeteria.mlsvDate;
+    if (cafeteriaDate.includes("월~금")) {
+      cafeteriaDate = cafeteriaDate.replace("월~금", "월,화,수,목,금");
+    } else if (cafeteriaDate.includes("월~토")) {
+      cafeteriaDate = cafeteriaDate.replace("월~토", "월,화,수,목,금,토");
     }
-    if (!cafeteria.longitude) {
-      return false;
-    }
-    //위도 검사
-    if (
-      userLat - 0.5 <= Number(cafeteria.latitude) &&
-      Number(cafeteria.latitude) <= userLat + 0.5
-    ) {
-      return true;
-    }
-    //경도 검사
-    if (
-      userLon - 0.5 <= Number(cafeteria.longitude) &&
-      Number(cafeteria.longitude) <= userLon + 0.5
-    ) {
+    if (cafeteriaDate.includes(userDate)) {
+      // console.log(cafeteria.mlsvDate, userDate); //필터링된 요일
       return true;
     }
   });
-  console.log(filteredData.length);
-  res.status(200).json(filteredData);
+  console.log(dateFilteredData.length);
+
+  //시간 필터링
+  console.log("시간 필터링");
+  const timeFilteredData = dateFilteredData.filter((cafeteria) => {
+    let cafeteriaTime = cafeteria.mlsvTime;
+    const regex = /\b\d{1,2}:\d{2}\b/g;
+    let times = [];
+    const matches = cafeteriaTime.match(regex);
+    if (matches) {
+      times = times.concat(matches);
+    }
+    // console.log(times);
+    // 시간이 2개 이상인 급식소만 필터링에 사용
+    while (times.length >= 2) {
+      // 시간을 2개씩 꺼내서 사용
+      let startTime = times.shift();
+      let endTime = times.shift();
+      // console.log(startTime, endTime);
+      if (isTimeInRange([startTime, endTime], userTime)) {
+        // console.log(startTime, endTime);
+        // console.log([userTime]);
+        return true;
+      }
+    }
+  });
+  console.log(timeFilteredData.length);
+
+  // 급식대상 필터링
+  res.status(200).json(timeFilteredData);
 });
 
 app.listen(3000, () => {
