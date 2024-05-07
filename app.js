@@ -114,7 +114,7 @@ app.post("/filteredCafeterias", async (req, res) => {
 
   const userDate = req.body.userDate; // user의 현재 요일
   const userTime = req.body.userTime; //user의 현재 시간
-  const userTarget = req.body.userTarget; // user의 급식대상
+  const userTarget = req.body.userTarget.split(","); // user의 급식대상
   const userAge = req.body.userAge;
   console.log(userDate, userTime, userTarget, userAge);
 
@@ -167,7 +167,57 @@ app.post("/filteredCafeterias", async (req, res) => {
   console.log(timeFilteredData.length);
 
   // 급식대상 필터링
-  res.status(200).json(timeFilteredData);
+  console.log("급식대상 필터링");
+  const targetFilterData = timeFilteredData.filter((cafeteria) => {
+    let cafeteriaTarget = cafeteria.mlsvTrget;
+    let cafeteriaTargetList = cafeteriaTarget.split(/[ +]/);
+    // console.log(cafeteriaTargetList);
+    // cafeteriaTargetList => [ '65세이상', '저소득', '결식우려', '노인' ]
+
+    for (let i = 0; i < cafeteriaTargetList.length; i++) {
+      let element = cafeteriaTargetList[i];
+      let age = undefined;
+      let kidFlag = false;
+      if (element === "결식아동") {
+        //결식아동 예외처리
+        age = 18;
+        kidFlag = true;
+      }
+      //각 요소에 숫자가 포함되어 있는지 체크
+      let ageList = [];
+      [...element].forEach((e) => {
+        if (Number(e) || Number(e) === 0) {
+          ageList.push(e);
+        }
+      });
+      if (ageList.length > 0 || kidFlag) {
+        //요소에 숫자가 포함되어 있거나 결식아동인 경우
+        // -> 나이와 필터링 해준다
+        if (kidFlag) {
+          if (Number(userAge) < age) {
+            // 유저 나이가 기준 나이(결식아동) 보다 작다면
+            return true;
+          }
+        } else {
+          age = Number(ageList.join(""));
+          if (Number(userAge) < age) {
+            // 유저 나이가 기준 나이보다 작다면
+            return false;
+          }
+        }
+      } else {
+        //요소에 나이가 포함되어 있지 않다면
+        // ->유저가 준 키워드들 중 해당된다면 true를 반환한다
+        for (let i = 0; i < userTarget.length; i++) {
+          if (element.includes(userTarget[i])) {
+            return true;
+          }
+        }
+      }
+    }
+  });
+  console.log(targetFilterData.length);
+  res.status(200).json(targetFilterData);
 });
 
 app.listen(3000, () => {
