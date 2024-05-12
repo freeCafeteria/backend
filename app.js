@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import schedule from "node-schedule";
 import redis from "redis";
 import { isTimeInRange } from "./utils.js";
+import { findNearestFacilities } from "./utils.js";
 
 dotenv.config();
 const app = express();
@@ -218,6 +219,42 @@ app.post("/filteredCafeterias", async (req, res) => {
   });
   console.log(targetFilterData.length);
   res.status(200).json(targetFilterData);
+});
+
+// 유저 주변의 급식소 들고오기
+app.post("/userAroundCafeterias", async (req, res) => {
+  // user 위도,경도 가져오기
+
+  const userLatitude = Number(req.body.userLatitude); // user 위도
+  const userLongitude = Number(req.body.userLongitude); //user 경도
+  console.log(userLatitude, userLongitude);
+  const redisKey = `${userLatitude},${userLongitude}`;
+
+  const redisKeyExist = await redisCli.exists(redisKey);
+  let data;
+  if (redisKeyExist) {
+    console.log("key exist");
+    data = await redisClient.v4.get(redisKey);
+    data = JSON.parse(data);
+  } else {
+    console.log("key exist XXX");
+    const allCafeterias = await redisClient.v4.get("cafeterias");
+    data = JSON.parse(allCafeterias);
+    data = findNearestFacilities(data, userLatitude, userLongitude);
+    //캐싱
+    let settingLocationCafeteria = await redisClient.v4.set(
+      redisKey,
+      JSON.stringify(data)
+    );
+    await redisClient.v4.expire(redisKey, 3600); //1시간만 보관
+    if (settingLocationCafeteria) {
+      console.log("사용자 위치에 따른 급식소 정보 저장성공");
+    } else {
+      console.log("사용자 위치에 따른 급식소 정보 저장실패");
+    }
+  }
+  console.log(data.length);
+  res.status(200).json(data);
 });
 
 app.listen(3000, () => {
