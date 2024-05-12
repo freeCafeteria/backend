@@ -112,16 +112,45 @@ app.get("/allCafeteriasTarget", async (req, res) => {
 
 app.post("/filteredCafeterias", async (req, res) => {
   // user 위도,경도 가져오기
+  const userLatitude = Number(req.body.userLatitude); // user 위도
+  const userLongitude = Number(req.body.userLongitude); //user 경도
+  console.log(userLatitude, userLongitude);
+  const redisKey = `${userLatitude},${userLongitude}`;
 
   const userDate = req.body.userDate; // user의 현재 요일
   const userTime = req.body.userTime; //user의 현재 시간
   const userTarget = req.body.userTarget.split(","); // user의 급식대상
   const userAge = req.body.userAge;
   console.log(userDate, userTime, userTarget, userAge);
+  const redisKeyExist = await redisCli.exists(redisKey);
 
-  // 급식소 정보 들고오기
-  let data = await redisClient.v4.get("cafeterias");
-  data = JSON.parse(data);
+  // 급식소 정보 들고오기  -> 위치기반으로 가져오기
+  let data;
+  if (redisKeyExist) {
+    console.log("key exist");
+    data = await redisClient.v4.get(redisKey);
+    data = JSON.parse(data);
+  } else {
+    console.log("key exist XXX");
+    const allCafeterias = await redisClient.v4.get("cafeterias");
+    data = JSON.parse(allCafeterias);
+    data = findNearestFacilities(data, userLatitude, userLongitude);
+    //캐싱
+    let settingLocationCafeteria = await redisClient.v4.set(
+      redisKey,
+      JSON.stringify(data)
+    );
+    await redisClient.v4.expire(redisKey, 3600); //1시간만 보관
+    if (settingLocationCafeteria) {
+      console.log("사용자 위치에 따른 급식소 정보 저장성공");
+    } else {
+      console.log("사용자 위치에 따른 급식소 정보 저장실패");
+    }
+  }
+  console.log(data.length);
+
+  // let data = await redisClient.v4.get("cafeterias");
+  // data = JSON.parse(data);
   //filter 로직
 
   //요일 필터링
