@@ -286,6 +286,51 @@ app.post("/userAroundCafeterias", async (req, res) => {
   res.status(200).json(data);
 });
 
+// 급식소 현황 등록 엔드포인트
+app.post("/cafeteriaStatus", async (req, res) => {
+  const { cafeteriaName, status, rating } = req.body;
+  const newStatus = {
+    id: Date.now(),
+    status,
+    rating,
+    date: new Date().toISOString(),
+  };
+  const statusKey = `status_${cafeteriaName}_${newStatus.id}`;
+
+  try {
+    // 새로운 상태를 개별 키로 저장하고 TTL 설정
+    await redisClient.v4.set(statusKey, JSON.stringify(newStatus));
+    await redisClient.v4.expire(statusKey, 24 * 60 * 60); // 24시간
+
+    res
+      .status(200)
+      .json({ message: "급식소 현황이 성공적으로 등록되었습니다" });
+  } catch (error) {
+    console.error("Redis에 급식소 현황 저장하는 중 오류 발생: ", error);
+    res.status(500).json({ message: "서버 내부 오류" });
+  }
+});
+
+// 특정 급식소의 현황 조회 엔드포인트
+app.get("/cafeteriaStatus", async (req, res) => {
+  const { cafeteriaName } = req.query;
+
+  try {
+    // 특정 급식소의 모든 현황 키 검색
+    const statusKeys = await redisClient.v4.keys(`status_${cafeteriaName}_*`);
+    const statusDataPromises = statusKeys.map((key) => redisClient.v4.get(key));
+    const statusData = await Promise.all(statusDataPromises);
+
+    // 데이터 파싱
+    const parsedStatusData = statusData.map((status) => JSON.parse(status));
+
+    res.status(200).json(parsedStatusData);
+  } catch (error) {
+    console.error("Redis에서 현황 가져오는 중 오류 발생: ", error);
+    res.status(500).json({ message: "서버 내부 오류" });
+  }
+});
+
 app.listen(3000, () => {
   //서버 실행 시 공공 데이터 가져오기
   set_data_in_redis();
