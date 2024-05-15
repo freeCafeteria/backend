@@ -250,6 +250,155 @@ app.post("/filteredCafeterias", async (req, res) => {
   res.status(200).json(targetFilterData);
 });
 
+app.post("/filteredCafeterias2", async (req, res) => {
+  // user 위도,경도 가져오기
+  const userLatitude = Number(req.body.userLatitude); // user 위도
+  const userLongitude = Number(req.body.userLongitude); //user 경도
+  console.log(userLatitude, userLongitude);
+  const redisKey = `${userLatitude},${userLongitude}`;
+
+  const userDate = req.body.userDate; // user의 현재 요일
+  const userTime = req.body.userTime; //user의 현재 시간
+  const userTarget = req.body.userTarget.split(","); // user의 급식대상
+  const userAge = req.body.userAge;
+  console.log(userDate, userTime, userTarget, userAge);
+  const redisKeyExist = await redisCli.exists(redisKey);
+
+  // 급식소 정보 들고오기  -> 위치기반으로 가져오기
+  let data;
+  if (redisKeyExist) {
+    console.log("key exist");
+    data = await redisClient.v4.get(redisKey);
+    data = JSON.parse(data);
+  } else {
+    console.log("key exist XXX");
+    const allCafeterias = await redisClient.v4.get("cafeterias");
+    data = JSON.parse(allCafeterias);
+    data = findNearestFacilities(data, userLatitude, userLongitude);
+    //캐싱
+    let settingLocationCafeteria = await redisClient.v4.set(
+      redisKey,
+      JSON.stringify(data)
+    );
+    await redisClient.v4.expire(redisKey, 3600); //1시간만 보관
+    if (settingLocationCafeteria) {
+      console.log("사용자 위치에 따른 급식소 정보 저장성공");
+    } else {
+      console.log("사용자 위치에 따른 급식소 정보 저장실패");
+    }
+  }
+  console.log(data.length);
+
+  // let data = await redisClient.v4.get("cafeterias");
+  // data = JSON.parse(data);
+  //filter 로직
+  data = data.map((cafeteria) => {
+    const added = {
+      visible: true,
+    };
+    return { ...cafeteria, ...added };
+  });
+  //요일 필터링
+  console.log("요일 필터링");
+  data = data.map((cafeteria) => {
+    //요일 필터링
+    let cafeteriaDate = cafeteria.mlsvDate;
+    if (cafeteriaDate.includes("월~금")) {
+      cafeteriaDate = cafeteriaDate.replace("월~금", "월,화,수,목,금");
+    } else if (cafeteriaDate.includes("월~토")) {
+      cafeteriaDate = cafeteriaDate.replace("월~토", "월,화,수,목,금,토");
+    } else if (cafeteriaDate.includes("매일")) {
+      cafeteriaDate = cafeteriaDate.replace("매일", "월,화,수,목,금,토,일");
+    }
+    if (!cafeteriaDate.includes(userDate)) {
+      // console.log(cafeteria.mlsvDate, userDate); //필터링된 요일
+
+      return { ...cafeteria, visible: false };
+    }
+    return cafeteria;
+  });
+
+  //시간 필터링
+  // console.log("시간 필터링");
+  data = data.map((cafeteria) => {
+    if (cafeteria.visible) {
+      let cafeteriaTime = cafeteria.mlsvTime;
+      const regex = /\b\d{1,2}:\d{2}\b/g;
+      let times = [];
+      const matches = cafeteriaTime.match(regex);
+      if (matches) {
+        times = times.concat(matches);
+      }
+      // 시간이 2개 이상인 급식소만 필터링에 사용
+      while (times.length >= 2) {
+        // 시간을 2개씩 꺼내서 사용
+        let startTime = times.shift();
+        let endTime = times.shift();
+        if (!isTimeInRange([startTime, endTime], userTime)) {
+          return { ...cafeteria, visible: false };
+        }
+      }
+    }
+    return cafeteria;
+  });
+
+  // 급식대상 필터링
+  console.log("급식대상 필터링");
+  data = data.map((cafeteria) => {
+    if (cafeteria.visible) {
+      let cafeteriaTarget = cafeteria.mlsvTrget;
+      let cafeteriaTargetList = cafeteriaTarget.split(/[ +]/);
+
+      for (let i = 0; i < cafeteriaTargetList.length; i++) {
+        let element = cafeteriaTargetList[i];
+        let age = undefined;
+        let kidFlag = false;
+        if (element === "결식아동") {
+          //결식아동 예외처리
+          age = 18;
+          kidFlag = true;
+        }
+        //각 요소에 숫자가 포함되어 있는지 체크
+        let ageList = [];
+        [...element].forEach((e) => {
+          if (Number(e) || Number(e) === 0) {
+            ageList.push(e);
+          }
+        });
+        if (ageList.length > 0 || kidFlag) {
+          //요소에 숫자가 포함되어 있거나 결식아동인 경우
+          // -> 나이와 필터링 해준다
+          if (kidFlag) {
+            if (Number(userAge) > age) {
+              // 유저 나이가 기준 나이(결식아동) 보다 작다면
+              return { ...cafeteria, visible: false };
+            }
+          } else {
+            age = Number(ageList.join(""));
+            if (Number(userAge) < age) {
+              // 유저 나이가 기준 나이보다 작다면
+              return { ...cafeteria, visible: false };
+            }
+          }
+        } else {
+          //요소에 나이가 포함되어 있지 않다면
+          // ->유저가 준 키워드들 중 해당된다면 true를 반환한다
+          for (let i = 0; i < userTarget.length; i++) {
+            if (element.includes(userTarget[i])) {
+              return { ...cafeteria, visible: true };
+            }
+          }
+          // return { ...cafeteria, visible: false };
+        }
+      }
+      return { ...cafeteria, visible: false };
+    }
+    return cafeteria;
+  });
+  console.log(data.length);
+  res.status(200).json(data);
+});
+
 // 유저 주변의 급식소 들고오기
 app.post("/userAroundCafeterias", async (req, res) => {
   // user 위도,경도 가져오기
@@ -282,6 +431,12 @@ app.post("/userAroundCafeterias", async (req, res) => {
       console.log("사용자 위치에 따른 급식소 정보 저장실패");
     }
   }
+  data = data.map((cafeteria) => {
+    const added = {
+      visible: true,
+    };
+    return { ...cafeteria, ...added };
+  });
   console.log(data.length);
   res.status(200).json(data);
 });
